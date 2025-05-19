@@ -1,18 +1,10 @@
 return {
-    {
-        "zbirenbaum/copilot.lua",
-        config = function()
-            require("copilot").setup({
-                suggestion = { enabled = true },
-                panel = { enabled = true },
-            })
-        end,
+    "CopilotC-Nvim/CopilotChat.nvim",
+    dependencies = {
+        { "zbirenbaum/copilot.lua" },
+        { "nvim-lua/plenary.nvim", branch = "master" },
     },
-    {
-        "zbirenbaum/copilot-cmp",
-        dependencies = { "zbirenbaum/copilot.lua" },
-        config = function()
-            require("copilot_cmp").setup()
-        end,
+    build = "make tiktoken",
+    opts = {
     },
 }

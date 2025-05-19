@@ -3,25 +3,53 @@ return {
     dependencies = {
         "williamboman/mason.nvim",
         "williamboman/mason-lspconfig.nvim",
-        "jose-elias-alvarez/null-ls.nvim", -- for formatters
+        "nvimtools/none-ls.nvim",
+        "hrsh7th/cmp-nvim-lsp",
+        "hrsh7th/nvim-cmp",
     },
     config = function()
-        local lspconfig = require("lspconfig")
+        -- === Global formatting options ===
+        vim.opt.tabstop = 4
+        vim.opt.shiftwidth = 4
+        vim.opt.expandtab = true
+
+        -- === nvim-cmp setup for <Tab> navigation ===
+        local cmp = require("cmp")
+        cmp.setup({
+            mapping = {
+                ["<Tab>"] = cmp.mapping(function(fallback)
+                    if cmp.visible() then
+                        cmp.select_next_item()
+                    else
+                        fallback()
+                    end
+                end, { "i", "s" }),
+                ["<S-Tab>"] = cmp.mapping(function(fallback)
+                    if cmp.visible() then
+                        cmp.select_prev_item()
+                    else
+                        fallback()
+                    end
+                end, { "i", "s" }),
+                ["<CR>"] = cmp.mapping(function(fallback)
+                    if cmp.visible() and cmp.get_selected_entry() then
+                        cmp.confirm({ select = false })
+                    else
+                        fallback()
+                    end
+                end, { "i", "s" }),
+            },
+            sources = {
+                { name = "nvim_lsp" },
+            },
+        })
+
+        -- === Mason and LSP setup ===
         local mason = require("mason")
         local mason_lspconfig = require("mason-lspconfig")
         local null_ls = require("null-ls")
 
         mason.setup()
-        mason_lspconfig.setup({
-            ensure_installed = {
-                "lua_ls",
-                "pyright",
-                "clangd",
-                "ts_ls",
-                "eslint",
-                "tailwindcss"
-            },
-        })
 
         local function on_attach(client, bufnr)
             local opts = { noremap = true, silent = true, buffer = bufnr }
@@ -36,90 +64,84 @@ return {
                 vim.lsp.buf.format({ async = true })
             end, opts)
 
-            vim.api.nvim_create_autocmd("BufWritePre", {
-                buffer = bufnr,
-                callback = function()
-                    vim.lsp.buf.format({ async = false })
-                end,
-            })
-
-            if client.server_capabilities.documentFormattingProvider then
-                client.server_capabilities.documentFormattingProvider = true
+            if client.supports_method("textDocument/formatting") then
+                vim.api.nvim_create_autocmd("BufWritePre", {
+                    group = vim.api.nvim_create_augroup("LspFormatOnSave_" .. bufnr, { clear = true }),
+                    buffer = bufnr,
+                    callback = function()
+                        vim.lsp.buf.format({
+                            async = false,
+                            timeout_ms = 2000,
+                        })
+                    end,
+                })
             end
-
-            client.server_capabilities.signatureHelpProvider = false
         end
 
-        -- LSP: lua
-        lspconfig.lua_ls.setup({
-            on_attach = on_attach,
-            settings = {
-                Lua = {
-                    runtime = { version = "LuaJIT" },
-                    diagnostics = { globals = { "vim" } },
-                    format = { enable = true },
-                    workspace = {
-                        library = vim.api.nvim_get_runtime_file("", true),
-                        checkThirdParty = false,
-                    },
-                    telemetry = { enable = false },
-                },
-            },
-        })
+        local capabilities = require("cmp_nvim_lsp").default_capabilities()
 
-        -- LSP: python
-        lspconfig.pyright.setup({
-            on_attach = on_attach,
-            settings = {
-                python = {
-                    analysis = {
-                        typeCheckingMode = "basic",
-                        autoSearchPaths = true,
-                        useLibraryCodeForTypes = true,
+        local servers = {
+            lua_ls = {
+                settings = {
+                    Lua = {
+                        runtime = { version = "LuaJIT" },
+                        diagnostics = { globals = { "vim" } },
+                        workspace = { library = vim.api.nvim_get_runtime_file("", true) },
+                        telemetry = { enable = false },
+                        format = { enable = false },
                     },
                 },
             },
+            pyright = {},
+            clangd = {},
+            ts_ls = {},
+            eslint = {},
+            tailwindcss = {},
+        }
+
+        mason_lspconfig.setup({
+            ensure_installed = vim.tbl_keys(servers),
+            automatic_installation = true,
         })
 
-        -- LSP: C/C++
-        lspconfig.clangd.setup({
-            on_attach = on_attach,
-            cmd = {
-                "clangd",
-                "--background-index",
-                "--clang-tidy",
-                "--header-insertion=never",
-                "--fallback-style=webkit",
-            },
-            filetypes = { "c", "cpp", "objc", "objcpp" },
-            init_options = { clangdFileStatus = true },
-        })
+        local lspconfig = require("lspconfig")
+        for server, config in pairs(servers) do
+            lspconfig[server].setup(vim.tbl_deep_extend("force", {
+                on_attach = on_attach,
+                capabilities = capabilities,
+            }, config))
+        end
 
-        -- LSP: JS/TS
-        lspconfig.ts_ls.setup({
-            on_attach = on_attach,
-            filetypes = { "javascript", "typescript", "javascriptreact", "typescriptreact" },
-        })
-
-        -- Formatter 설정 (null-ls + prettierd)
+        -- === none-ls (null-ls) setup for formatting ===
         null_ls.setup({
             sources = {
                 null_ls.builtins.formatting.prettierd.with({
                     filetypes = {
-                        "javascript",
-                        "typescript",
-                        "javascriptreact",
-                        "typescriptreact",
-                        "json",
-                        "yaml",
-                        "markdown",
-                        "html",
-                        "css",
-                        "scss",
+                        "javascript", "typescript", "javascriptreact", "typescriptreact",
+                        "json", "yaml", "markdown", "html", "css", "scss", "lua",
                     },
+                    extra_args = { "--tab-width", "4" },
                 }),
             },
-            on_attach = on_attach,
+            on_attach = function(client, bufnr)
+                if client.supports_method("textDocument/formatting") then
+                    vim.api.nvim_create_autocmd("BufWritePre", {
+                        group = vim.api.nvim_create_augroup("NoneLsFormatOnSave_" .. bufnr, { clear = true }),
+                        buffer = bufnr,
+                        desc = "Format with none-ls",
+                        callback = function()
+                            vim.lsp.buf.format({
+                                bufnr = bufnr,
+                                filter = function(cl)
+                                    return cl.name == "null-ls" or cl.name == "none-ls"
+                                end,
+                                async = false,
+                                timeout_ms = 2000,
+                            })
+                        end,
+                    })
+                end
+            end,
         })
     end,
 }
